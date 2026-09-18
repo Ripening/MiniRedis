@@ -1,0 +1,18 @@
+# 构建产物
+build/
+build-*/
+cmake-build-*/
+
+# macOS
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 编译中间物 / 运行日志
+*.o
+*.a
+*.log
