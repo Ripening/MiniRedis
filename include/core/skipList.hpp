@@ -31,6 +31,10 @@ public:
     ~SkipList();
     SkipList(const SkipList&) = delete;
     SkipList& operator=(const SkipList&) = delete;
+    
+    // 返回跳表长度
+    size_t length() const { return length_;}
+
     //跳表中插入数据
     void insert(double score, SDS element);
     //删除

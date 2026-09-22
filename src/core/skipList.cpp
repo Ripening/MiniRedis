@@ -179,7 +179,7 @@ const SkipListNode* SkipList::nodeByRank(size_t rank) const{
 bool SkipList::hasInRange(const ScoreRange& range) const{
     //排除空跳表
     if(tail_ == nullptr || header_->forward(0) == nullptr) return false;
-    // 排除 [3,2], (2,2), (2,2], [2,2)
+    
     if(range.min > range.max ||
         (range.min == range.max && (range.maxExclusive !=false || range.minExclusive !=false))){
             return false;

@@ -11,6 +11,7 @@ add_library(miniredis_core STATIC
         src/core/sds.cpp
         src/core/skipList.cpp
         src/object/redisObject.cpp
+        src/object/zset.cpp
         src/storage/inMemoryDB.cpp
         src/protocol/respParser.cpp
         src/command/commandDispatcher.cpp
@@ -59,7 +60,7 @@ if(MINIREDIS_BUILD_TESTS)
 
     enable_testing()
 
-    foreach(test_name test_sds test_dict test_object test_storage test_resp test_command test_skiplist)
+    foreach(test_name test_sds test_dict test_object test_storage test_resp test_command test_skiplist test_zset)
         add_executable(${test_name} tests/${test_name}.cpp)
         target_link_libraries(${test_name} PRIVATE miniredis_core GTest::gtest_main)
         add_test(NAME ${test_name} COMMAND ${test_name})

@@ -1,8 +1,7 @@
 #pragma once
 #include "sds.hpp"
 #include <functional>
-#include <string>
-#include <cstring>
+#include <string_view>
 template <typename V>
 class DICT
 {
@@ -29,7 +28,7 @@ public:
     DICT& operator= (DICT&& other) noexcept;
 
     bool set(SDS&& key,V value);
-    const V* get(const SDS&key);
+    const V* get(const SDS&key) const;
     bool erase(const SDS&key);
     size_t size() const;
     void forEach(const std::function<void(const SDS&, const V&)>& fn) const;
@@ -51,10 +50,10 @@ private:
     void clear();
 private:
     static size_t hashkey(const SDS& key) {
-        return std::hash<std::string>{}(key.c_str());
+        return std::hash<std::string_view>{}(std::string_view(key.c_str(), key.len()));
     }
     static bool keyEquals(const SDS& lhs, const SDS& rhs){
-        return std::strcmp(lhs.c_str(), rhs.c_str()) == 0;
+        return lhs.compare(rhs) == 0;
     }
     static size_t roundToPowerOfTwo(size_t size){
         size_t out = 4;
@@ -215,10 +214,12 @@ bool DICT<V>::set(SDS&& key,V value){
     return true;
 }
 template <typename V>
-const V* DICT<V>::get(const SDS&key){
+const V* DICT<V>::get(const SDS&key) const{
     
     if(isRehashing()){
-        rehashStep();
+        // rehash 只搬内部桶,不改变"字典里有哪些键值"这个逻辑状态,
+        // 所以 const 读操作也允许推进它
+        const_cast<DICT*>(this)->rehashStep();
     }
     if(dictEntry* entry = findEntryInTable(dict_.ht[0],key)){
         return &entry->value;
