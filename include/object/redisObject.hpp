@@ -4,16 +4,19 @@
 #include <string_view>
 #include "core/sds.hpp"
 #include "core/dict.hpp"
+#include "object/zset.hpp"
 class redisObject
 {
 public:
     enum class RedisObjectType{
         STRING = 0,
         HASH   = 1,
+        ZSET   = 2,
     };
     enum class RedisObjectEncoding{
         RAW = 0,
         HASHTABLE = 1,
+        SKIPLIST = 2,
     };
 public:
     static inline std::unique_ptr<redisObject> createStringObject(std::string_view str){
@@ -21,6 +24,9 @@ public:
     }
     static inline std::unique_ptr<redisObject> createHashObject(){
         return std::unique_ptr<redisObject>(new redisObject(RedisObjectType::HASH,RedisObjectEncoding::HASHTABLE,new DICT<SDS>()));
+    }
+    static inline std::unique_ptr<redisObject> createZSetObject(){
+        return std::unique_ptr<redisObject>(new redisObject(RedisObjectType::ZSET,RedisObjectEncoding::SKIPLIST,new ZSet()));
     }
     RedisObjectType type() const { return type_; }
 
@@ -43,6 +49,16 @@ public:
         if(obj->ptr_ == nullptr || obj->type_ != RedisObjectType::HASH) return nullptr;
 
         return static_cast<DICT<SDS>*>(obj->ptr_);
+    }
+    static inline const ZSet* getZSetObjectValue(const redisObject* obj){
+        if(obj->ptr_ == nullptr || obj->type_ != RedisObjectType::ZSET) return nullptr;
+
+        return static_cast<ZSet*>(obj->ptr_);
+    }
+    static inline ZSet* getZSetObjectValue(redisObject* obj){
+        if(obj->ptr_ == nullptr || obj->type_ != RedisObjectType::ZSET) return nullptr;
+
+        return static_cast<ZSet*>(obj->ptr_);
     }
     ~redisObject();
 

@@ -17,6 +17,9 @@ void redisObject::freeRedisObject(RedisObjectType type){
     case RedisObjectType::HASH:
         delete static_cast<DICT<SDS>*>(ptr_);
         break;
+    case RedisObjectType::ZSET:
+        delete static_cast<ZSet*>(ptr_);
+        break;
     }
     ptr_ = nullptr;
 }

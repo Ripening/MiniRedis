@@ -92,3 +92,52 @@ TEST(RedisObjectTest, DestroyHashReleasesPayload) {
     obj.reset();   // 不崩即通过
     SUCCEED();
 }
+
+TEST(RedisObjectTest, CreateZSetStartsEmpty) {
+    auto obj = redisObject::createZSetObject();
+    const ZSet* z = redisObject::getZSetObjectValue(obj.get());
+    ASSERT_NE(z, nullptr);
+    EXPECT_EQ(z->card(), 0u);
+}
+
+TEST(RedisObjectTest, ZSetAddLookupAndRank) {
+    auto obj = redisObject::createZSetObject();
+    ZSet* z = redisObject::getZSetObjectValue(obj.get());
+    ASSERT_NE(z, nullptr);
+
+    EXPECT_TRUE(z->add("a", 1.0));
+    EXPECT_TRUE(z->add("b", 2.0));
+    EXPECT_FALSE(z->add("a", 3.0));   // 改分
+
+    EXPECT_EQ(z->card(), 2u);
+    const double* sc = z->scoreOf("a");
+    ASSERT_NE(sc, nullptr);
+    EXPECT_DOUBLE_EQ(*sc, 3.0);
+    EXPECT_EQ(z->rankOf("a"), 2u);    // 3.0 > 2.0
+    EXPECT_EQ(z->rankOf("b"), 1u);
+    EXPECT_EQ(z->scoreOf("missing"), nullptr);
+}
+
+// unique_ptr 析构 → ~redisObject → switch → delete ZSet
+//   → 逐层析构 DICT 与 SkipList(节点全是 new 出来的,漏了就是大面积泄漏)
+TEST(RedisObjectTest, DestroyZSetReleasesPayload) {
+    auto obj = redisObject::createZSetObject();
+    ZSet* z = redisObject::getZSetObjectValue(obj.get());
+    for (int i = 0; i < 64; ++i) {
+        z->add("m" + std::to_string(i), i);
+    }
+    obj.reset();   // 不崩即通过;ASan/LSan 下泄漏会报错
+    SUCCEED();
+}
+
+TEST(RedisObjectTest, ZSetWrongTypeAccessReturnsNull) {
+    auto zset = redisObject::createZSetObject();
+    EXPECT_EQ(redisObject::getHashObjectValue(zset.get()), nullptr);
+    EXPECT_EQ(redisObject::getStringObjectValue(zset.get()), nullptr);
+
+    auto hash = redisObject::createHashObject();
+    EXPECT_EQ(redisObject::getZSetObjectValue(hash.get()), nullptr);
+
+    auto str = redisObject::createStringObject("x");
+    EXPECT_EQ(redisObject::getZSetObjectValue(str.get()), nullptr);
+}
