@@ -61,6 +61,7 @@ public:
     
     void clear();
 
+    int compare(const SDS& other) const;
 private:
     static uint8_t select_type(size_t len);
     static size_t hdr_size(uint8_t type);

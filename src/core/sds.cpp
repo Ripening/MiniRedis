@@ -202,6 +202,15 @@ void SDS::append(std::string_view str){
     append(str.data(),str.length());
 }
 
+int SDS::compare(const SDS& other) const{
+    const size_t n = std::min(len(),other.len());
+    const int cmp = ::memcmp(c_str(),other.c_str(),n);
+    if(cmp!=0) return cmp;
+    if(len() > other.len()) return 1;
+    if(len() < other.len()) return -1;
+
+    return 0;
+}
 
 
 

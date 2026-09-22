@@ -75,6 +75,13 @@ public:
 
     // 导出当前有效数据(String/Hash)；已过期键跳过，expiredAtMs 为 -1 表示无过期时间。
     std::vector<DBSnapshotEntry> snapshot();
+
+
+    // 获取当前单调时钟毫秒时间戳。
+    static int64_t nowMs(){
+        using namespace std::chrono;
+        return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    }
 private:
     redisObject* getObject(const std::string& key);
     //惰性检查：检查key时效，过期立马删除
@@ -85,12 +92,7 @@ private:
     bool eraseExpire(const std::string& key);
     // 获取 key 的绝对过期时间（毫秒）；不存在返回 false。
     bool getExpireAtMs(const std::string& key, int64_t& expireAtMs);
-
-    // 获取当前单调时钟毫秒时间戳。
-    static inline int64_t nowMs(){
-        using namespace std::chrono;
-        return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-    }
+    
 private:
     DICT<std::unique_ptr<redisObject>>  kv_;
     DICT<int64_t>                      expires_;

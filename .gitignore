@@ -16,3 +16,6 @@ cmake-build-*/
 *.o
 *.a
 *.log
+
+# 运行时数据
+appendonly.aof*

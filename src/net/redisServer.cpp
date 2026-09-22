@@ -5,7 +5,8 @@
 #include "command/commandParser.hpp"
 #include <string>
 #include <vector>
-
+#include <iostream>
+#include <cstdlib>
 RedisServer::RedisServer(int port,
             const std::string& name,
             TcpServer::Option option):
@@ -15,6 +16,11 @@ RedisServer::RedisServer(int port,
 }
 
 void RedisServer::start(){
+    if(!dispatcher_.loadAof()){
+        std::cerr << "load AOF failed: " << dispatcher_.lastError() << std::endl;
+        std::exit(1);
+    }
+    mainLoop_.runEvery(1.0, [this]{ dispatcher_.cron(); });
     redisServer_.start();
     mainLoop_.loop();
 }
@@ -56,6 +62,9 @@ void RedisServer::onMessage(const TcpConnectionPtr& conn,Buffer* buf){
 }
 
 void RedisServer::initialize(){
+    // AOF 默认关闭，由服务器在启动配置阶段打开
+    dispatcher_.aof().setEnabled(true);
+    dispatcher_.aof().setAofFsyncPolicy(AofFsyncPolicy::EverySec);
     redisServer_.setConnectCallBack([this](const TcpConnectionPtr& conn){
         onConnection(conn);
     });

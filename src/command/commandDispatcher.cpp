@@ -8,6 +8,9 @@
 #include <utility>
 
 namespace{
+
+    constexpr size_t kActiveExpireSampleCount = 64;
+    constexpr size_t kAofRewriteMinSize = 65536;
     using CommandHandler = std::string(*)(InMemoryDB& db,const std::vector<std::string>& argv);
 
     struct CommandSpec{
@@ -245,12 +248,30 @@ namespace{
 }
 
 std::string CommandDispatcher::dispatch(const std::vector<std::string>& argv){
+    return dispatchInternal(argv,false);
+}
+std::string CommandDispatcher::dispatchInternal(const std::vector<std::string>& argv, bool replayingAof){
     if(argv.empty()) return RespEncoder::error("ERR empty command");
 
     // 命令名大小写不敏感:统一转小写再查表
     std::string name = argv[0];
     for(char& c : name){
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    if(name == "rewriteaof"){
+        std::string err;
+        if(!aof_.rewriteCommands(snapshotCommands(),err)){
+            return RespEncoder::error(err);
+        }
+        return RespEncoder::simpleString("rewriting started");
+    }
+    else if(name == "bgrewriteaof"){
+        std::string err;
+        if(!aof_.startBackgroundRewrite(snapshotCommands(),err)){
+            return RespEncoder::error(err);
+        }
+        return RespEncoder::simpleString("Background append only file rewriting started");
     }
 
     const auto it = kCommands.find(name);
@@ -261,9 +282,96 @@ std::string CommandDispatcher::dispatch(const std::vector<std::string>& argv){
 
     if(!arityOk(spec.arity,argv.size())) return wrongArity(name);
 
-    if(spec.isWrite){
-        // AOF 就绪后:这里先把当前命令追加进 AOF 缓冲区,失败则直接返回错误、不执行命令
+    const std::string message = spec.handler(db_,argv);
+
+    if(spec.isWrite && !replayingAof && (!message.empty()&&message[0]!='-')){
+        // 写命令执行成功后才追加进 AOF;失败的命令和回放中的命令都不写入
+        std::string err;
+        if(!aof_.appendCommand(argv,err)){
+            return RespEncoder::error(err);
+        }
     }
 
-    return spec.handler(db_,argv);
+    return message;
+}
+
+bool CommandDispatcher::loadAof(){
+    lastError_.clear();
+    return aof_.replay(
+        [&](const std::vector<std::string>& argv,std::string& err){
+            const std::string replay = dispatchInternal(argv,true);
+            if(!replay.empty()&&replay[0]=='-'){
+                err = replay;
+                return false;
+            }
+            return true;
+        },
+    lastError_);
+}
+
+bool CommandDispatcher::rewriteAof(std::string& err){
+    err.clear();
+    return aof_.rewriteCommands(snapshotCommands(),err);
+}
+bool CommandDispatcher::backgroundRewriteAof(std::string& err){
+    err.clear();
+    return aof_.startBackgroundRewrite(snapshotCommands(),err);
+}
+std::vector<std::vector<std::string>> CommandDispatcher::snapshotCommands(){
+    std::vector<DBSnapshotEntry> entries = db_.snapshot();
+    std::vector<std::vector<std::string> > commands;
+    commands.reserve(entries.size()*2);
+    for(const DBSnapshotEntry& entry : entries){
+        int64_t ttlMs = -1;
+        if(entry.expiredAtMs > 0){
+            ttlMs = entry.expiredAtMs - InMemoryDB::nowMs();
+            if(ttlMs <= 0) continue;        // 已死：整条跳过
+        }
+
+        if(entry.type == redisObject::RedisObjectType::STRING){
+            commands.push_back({"SET",entry.key,entry.stringValue});
+        }else if(entry.type == redisObject::RedisObjectType::HASH){
+            if(!entry.hashEntries.empty()){
+                std::vector<std::string> argv;
+                argv.reserve(2 + entry.hashEntries.size()*2);
+                argv.push_back("HSET");
+                argv.push_back(entry.key);
+                for(const auto& element : entry.hashEntries){
+                    argv.push_back(element.key);
+                    argv.push_back(element.value);
+                }
+                commands.push_back(std::move(argv));
+            }
+        }
+
+        if(ttlMs > 0){
+            commands.push_back({"EXPIRE", entry.key, std::to_string((ttlMs + 999) / 1000)});
+        }
+    }
+
+    return commands;
+}
+
+void CommandDispatcher::cron(){
+    (void)db_.activeExpireCycle(kActiveExpireSampleCount);
+
+    std::string err;
+    if (!aof_.flushIfNeeded(err)) {
+        lastError_ = "AOF fsync failed: " + err;
+    }
+    const bool wasBackgroundRewrite = aof_.backgroundRewriteInProgress();
+    if (!aof_.pollBackgroundRewrite(err)) {
+        lastError_ = "AOF background rewrite failed: " + err;
+    }
+    else if(wasBackgroundRewrite && !aof_.backgroundRewriteInProgress()){
+        lastRewriteSize_ = aof_.fileSize(err);
+    }
+    if(!aof_.backgroundRewriteInProgress() 
+        && aof_.fileSize(err)>kAofRewriteMinSize
+        && aof_.fileSize(err)>lastRewriteSize_*2)
+        {
+            if(!aof_.startBackgroundRewrite(snapshotCommands(),err)){
+                lastError_ = "AOF BackgroundRewrite failed: " + err;
+            }
+        }
 }

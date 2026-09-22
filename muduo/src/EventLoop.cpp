@@ -1,9 +1,11 @@
 #include "EventLoop.h"
 #include "Channel.h"
 #include "Poller.h"
+#include "TimerQueue.h"
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <signal.h>
+#include <utility>
 __thread EventLoop* t_loopInThisThread = nullptr;
 
 const int kPollTime = 1000;
@@ -27,13 +29,14 @@ public:
 IgnoreSigPipe initObj;
 
 EventLoop::EventLoop()
-    :looping_(false),
-    quit_(false),
-    callingPendingFuncors_(false),
-    threadPid_(CurrentThread::tid()),
+    :poll_(Poller::newDefaultPoller(this)),
+    timerQueue_(new TimerQueue(this)),
     wakeupEventFd_(createEvenFd()),
     wakeupChannel_(new Channel(this,wakeupEventFd_)),
-    poll_(Poller::newDefaultPoller(this))
+    threadPid_(CurrentThread::tid()),
+    looping_(false),
+    quit_(false),
+    callingPendingFuncors_(false)
 {
     if(t_loopInThisThread){
         //log
@@ -46,6 +49,7 @@ EventLoop::EventLoop()
 }
 
 EventLoop::~EventLoop(){
+    timerQueue_.reset();    // 先销毁:它的 timerfd channel 要从 poller 里摘除
     wakeupChannel_->disableAll();
     wakeupChannel_->remove();
     ::close(wakeupEventFd_);
@@ -135,6 +139,25 @@ void EventLoop::removeChannel(Channel* channel){
 
 bool EventLoop::hasChannel(Channel* channel){
     return poll_->hasChannel(channel);
+}
+
+TimerId EventLoop::runAt(Timestamp when,TimerCallback cb){
+    return timerQueue_->addTimer(std::move(cb),when,0.0);
+}
+
+TimerId EventLoop::runAfter(double delaySeconds,TimerCallback cb){
+    return timerQueue_->addTimer(std::move(cb),
+                                addSeconds(nowTimestamp(),delaySeconds),0.0);
+}
+
+TimerId EventLoop::runEvery(double intervalSeconds,TimerCallback cb){
+    return timerQueue_->addTimer(std::move(cb),
+                                addSeconds(nowTimestamp(),intervalSeconds),
+                                intervalSeconds);
+}
+
+void EventLoop::cancel(TimerId timerId){
+    timerQueue_->cancel(timerId);
 }
 
 
