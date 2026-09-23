@@ -207,6 +207,168 @@ DBStatus InMemoryDB::hgetall(const std::string& key, std::vector<DBHashFieldEntr
 }
 
 
+DBStatus InMemoryDB::zadd(const std::string& key,
+                const std::vector<std::pair<double, std::string>>& memberScores,
+                int& addedCount){
+    addedCount = 0;
+    redisObject* obj = getObject(key);
+    if(obj == nullptr){
+        auto zset = redisObject::createZSetObject();
+        kv_.set(SDS(key),std::move(zset));
+        eraseExpire(key);
+    }else if(redisObject::getZSetObjectValue(obj) == nullptr){
+        return DBStatus::WrongType;
+    }
+
+    obj = getObject(key);
+    ZSet* zset = redisObject::getZSetObjectValue(obj);
+
+    for(const auto& [score,member] : memberScores){
+        if(zset->add(member,score)) addedCount++;
+    }
+    return DBStatus::OK;
+}
+
+DBStatus InMemoryDB::zrangeByRank(const std::string& key, long long start, long long stop,
+                        bool reverse, std::vector<DBZSetEntry>& entries){
+    entries.clear();
+    redisObject* obj = getObject(key);
+    if(obj == nullptr) return DBStatus::NotFound;
+    
+    ZSet* zset = redisObject::getZSetObjectValue(obj);
+    if(zset == nullptr) return DBStatus::WrongType;
+
+    std::vector<const SkipListNode*> nodes = zset->rangeByRank(start,stop,reverse);
+
+    for(const auto& node : nodes){
+        DBZSetEntry entry;
+        entry.member = std::string(node->element().c_str(),node->element().len());  // 二进制安全
+        entry.score = node->score();
+        entries.push_back(std::move(entry));
+    }
+
+    return DBStatus::OK;
+}
+
+DBStatus InMemoryDB::zrangeByScore(const std::string& key, const ScoreRange& range,
+                        bool reverse, std::vector<DBZSetEntry>& entries){
+    entries.clear();
+    redisObject* obj = getObject(key);
+    if(obj == nullptr) return DBStatus::NotFound;
+
+    ZSet* zset = redisObject::getZSetObjectValue(obj);
+    if(zset == nullptr) return DBStatus::WrongType;
+
+    std::vector<const SkipListNode*> nodes = zset->rangeByScore(range,reverse);
+    
+    for(const auto& node : nodes){
+        DBZSetEntry entry;
+        entry.member = std::string(node->element().c_str(),node->element().len());
+        entry.score = node->score();
+        entries.push_back(std::move(entry));
+    }
+
+    return DBStatus::OK;
+}
+
+DBStatus InMemoryDB::zrank(const std::string& key, const std::string& member,
+                bool reverse, size_t& rank){
+    redisObject* obj = getObject(key);
+    if(obj == nullptr) return DBStatus::NotFound;
+
+    ZSet* zset = redisObject::getZSetObjectValue(obj);
+    if(zset == nullptr) return DBStatus::WrongType;
+
+    const size_t r = zset->rankOf(member,reverse);
+    if(r == 0) return DBStatus::NotFound;
+    rank = r - 1;
+    return DBStatus::OK;
+}
+
+DBStatus InMemoryDB::zincrBy(const std::string& key, const std::string& member,
+                double delta, double& newScore){
+    redisObject* obj = getObject(key);
+    if(obj == nullptr){
+        auto zset = redisObject::createZSetObject();
+        kv_.set(SDS(key),std::move(zset));
+    }
+    else if(redisObject::getZSetObjectValue(obj) == nullptr){
+        return DBStatus::WrongType;
+    }
+    obj = getObject(key);
+    ZSet* zset = redisObject::getZSetObjectValue(obj); 
+
+    newScore = zset->incrBy(member,delta);
+    return DBStatus::OK;           
+}
+
+DBStatus InMemoryDB::zpopMin(const std::string& key, size_t count, std::vector<DBZSetEntry>& popped){
+    popped.clear();
+
+    redisObject* obj = getObject(key);
+    if(obj == nullptr) return DBStatus::NotFound;
+    ZSet* zset = redisObject::getZSetObjectValue(obj);
+    if(zset == nullptr) return DBStatus::WrongType;
+
+    while(popped.size() < count){
+        auto result = zset->popMin();
+        if(!result.has_value()) break;          // 弹空了,收工
+
+        popped.push_back(DBZSetEntry{
+            std::string(result->first.c_str(), result->first.len()),   // 二进制安全
+            result->second
+        });
+    }
+
+    if(zset->card() == 0) del(key);             // 只删一次,且在循环外
+    return DBStatus::OK;
+}
+
+DBStatus InMemoryDB::zpopMax(const std::string& key, size_t count, std::vector<DBZSetEntry>& popped){
+    popped.clear();
+
+    redisObject* obj = getObject(key);
+    if(obj == nullptr) return DBStatus::NotFound;
+    ZSet* zset = redisObject::getZSetObjectValue(obj);
+    if(zset == nullptr) return DBStatus::WrongType;
+
+    while(popped.size() < count){
+        auto result = zset->popMax();
+        if(!result.has_value()) break;          // 弹空了,收工
+
+        popped.push_back(DBZSetEntry{
+            std::string(result->first.c_str(), result->first.len()),   // 二进制安全
+            result->second
+        });
+    }
+
+    if(zset->card() == 0) del(key);             // 只删一次,且在循环外
+    return DBStatus::OK;
+}
+
+DBStatus InMemoryDB::zcard(const std::string& key, size_t& len){
+    redisObject* obj = getObject(key);
+    if(obj == nullptr) return DBStatus::NotFound;
+    ZSet* zset = redisObject::getZSetObjectValue(obj);
+    if(zset == nullptr) return DBStatus::WrongType;
+
+    len = zset->card();
+    return DBStatus::OK;
+}
+
+// ZSCORE key member；NotFound 表示 key 或 member 不存在。
+DBStatus InMemoryDB::zscore(const std::string& key, const std::string& member, double& score){
+    redisObject* obj = getObject(key);
+    if(obj == nullptr) return DBStatus::NotFound;
+    ZSet* zset = redisObject::getZSetObjectValue(obj);
+    if(zset == nullptr) return DBStatus::WrongType;
+
+    const double* sco = zset->scoreOf(member);
+    if(sco == nullptr) return DBStatus::NotFound;
+    score = *sco;
+    return DBStatus::OK;
+}
+
 int InMemoryDB::expire(const std::string& key, long long ttlSeconds){
     expireIfNeed(key);
 
@@ -321,17 +483,31 @@ std::vector<DBSnapshotEntry> InMemoryDB::snapshot(){
         }
 
         const DICT<SDS>* hash = redisObject::getHashObjectValue(obj);
-        if (hash == nullptr) {
+        if (hash != nullptr) {
+            entry.hashEntries.reserve(hash->size());
+            hash->forEach([&](const SDS& field, const SDS& fieldValue){
+                entry.hashEntries.push_back(DBHashFieldEntry {
+                    std::string(field.c_str(), field.len()),
+                    std::string(fieldValue.c_str(), fieldValue.len())
+                });
+            });
+            entries.push_back(std::move(entry));
+            return;
+        }
+
+        const ZSet* zset = redisObject::getZSetObjectValue(obj);
+        if (zset == nullptr) {
             return;                     // 未知类型，当前不可能
         }
 
-        entry.hashEntries.reserve(hash->size());
-        hash->forEach([&](const SDS& field, const SDS& fieldValue){
-            entry.hashEntries.push_back(DBHashFieldEntry {
-                std::string(field.c_str(), field.len()),
-                std::string(fieldValue.c_str(), fieldValue.len())
+        const std::vector<const SkipListNode*> nodes = zset->rangeByRank(0, -1);
+        entry.zsetEntries.reserve(nodes.size());
+        for (const SkipListNode* node : nodes) {
+            entry.zsetEntries.push_back(DBZSetEntry {
+                std::string(node->element().c_str(), node->element().len()),
+                node->score()
             });
-        });
+        }
         entries.push_back(std::move(entry));
     });
 

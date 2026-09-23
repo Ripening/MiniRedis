@@ -2,6 +2,7 @@
 #include "protocol/respEncoder.hpp"
 
 #include <cctype>
+#include <charconv>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -224,6 +225,13 @@ namespace{
         return intReply(db.persist(argv[1]));
     }
 
+    // 分数转字符串:to_string 是定点 6 位小数(1e-7 会变 "0.000000"),这里要最短往返表示
+    std::string scoreToString(double score){
+        char buf[32];
+        const auto result = std::to_chars(buf,buf + sizeof(buf),score);
+        return std::string(buf,result.ptr);
+    }
+
     const std::unordered_map<std::string_view, CommandSpec> kCommands = {
         {"ping",    {-1, false, handlePing}},
         {"set",     {3,  true,  handleSet}},
@@ -339,6 +347,18 @@ std::vector<std::vector<std::string>> CommandDispatcher::snapshotCommands(){
                 for(const auto& element : entry.hashEntries){
                     argv.push_back(element.key);
                     argv.push_back(element.value);
+                }
+                commands.push_back(std::move(argv));
+            }
+        }else if(entry.type == redisObject::RedisObjectType::ZSET){
+            if(!entry.zsetEntries.empty()){
+                std::vector<std::string> argv;
+                argv.reserve(2 + entry.zsetEntries.size()*2);
+                argv.push_back("ZADD");
+                argv.push_back(entry.key);
+                for(const auto& element : entry.zsetEntries){
+                    argv.push_back(scoreToString(element.score));
+                    argv.push_back(element.member);
                 }
                 commands.push_back(std::move(argv));
             }

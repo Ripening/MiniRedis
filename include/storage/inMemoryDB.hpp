@@ -15,6 +15,11 @@ struct DBHashFieldEntry{
     std::string key;
     std::string value;
 };
+struct DBZSetEntry{
+    std::string member;
+    double score;
+};
+
 struct DBSnapshotEntry{
     redisObject::RedisObjectType type;  //数据类型
     std::string key;    //key值
@@ -22,6 +27,7 @@ struct DBSnapshotEntry{
 
     std::string stringValue;    //作为字符串类型的数据值
     std::vector<DBHashFieldEntry> hashEntries; //作为哈希类型的数据值
+    std::vector<DBZSetEntry> zsetEntries;   //作为zset类型的数据值
 };
 
 class InMemoryDB
@@ -60,7 +66,34 @@ public:
     // HGETALL/HKEYS/HVALS 的底层导出接口；NotFound 表示 key 不存在。
     DBStatus hgetall(const std::string& key, std::vector<DBHashFieldEntry>& entries);
     
+    // ZADD key score member [score member ...]；仅新增成员计数,改分不算。
+    DBStatus zadd(const std::string& key,
+                const std::vector<std::pair<double, std::string>>& memberScores,
+                int& addedCount);
+    // ZRANGE/ZREVRANGE key start stop；start/stop 可负可越界,内部归一化。
+    // NotFound 表示 key 不存在；reverse=true 即 ZREVRANGE。
+    DBStatus zrangeByRank(const std::string& key, long long start, long long stop,
+                        bool reverse, std::vector<DBZSetEntry>& entries);
+    // ZRANGEBYSCORE key min max；范围由 handler 解析好后传入(兼容 ZREVRANGEBYSCORE)。
+    DBStatus zrangeByScore(const std::string& key, const ScoreRange& range,
+                         bool reverse, std::vector<DBZSetEntry>& entries);
+    // ZRANK/ZREVRANK key member；rank 为 0-based。NotFound 表示 key 或 member 不存在。
+    DBStatus zrank(const std::string& key, const std::string& member,
+                 bool reverse, size_t& rank);
+
+    // ZINCRBY key increment member；key 不存在时按 0 起算并新建。
+    DBStatus zincrBy(const std::string& key, const std::string& member,
+                   double delta, double& newScore);
     
+    // ZPOPMIN/ZPOPMAX key [count]；最多弹 count 个,弹空后删除 key。
+    DBStatus zpopMin(const std::string& key, size_t count, std::vector<DBZSetEntry>& popped);
+    DBStatus zpopMax(const std::string& key, size_t count, std::vector<DBZSetEntry>& popped);
+    
+    // ZCARD key；NotFound 表示 key 不存在。
+    DBStatus zcard(const std::string& key, size_t& len);
+    // ZSCORE key member；NotFound 表示 key 或 member 不存在。
+    DBStatus zscore(const std::string& key, const std::string& member, double& score);
+
     // EXPIRE key seconds；返回 1 表示设置成功，0 表示 key 不存在。
     int expire(const std::string& key, long long ttlSeconds);
     // TTL key；-2 不存在，-1 存在但无过期时间，>=0 剩余秒数。
