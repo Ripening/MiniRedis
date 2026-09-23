@@ -2,7 +2,7 @@
 
 > 对照对象:redis-3.0-annotated(黄健宏中文注释版),本地:`~/references/redis-3.0-annotated`
 > 跳表 + ZSet 代码几乎全在 `src/t_zset.c`(3.0 无独立 zskiplist.c),唯一例外:`zrangespec` 在 `src/redis.h:1705-1716`
-> 状态列截至 2026-09-21
+> 状态列截至 2026-09-23(跳表层与 ZSet 层均已写完并过测试)
 
 ## 跳表接口对照
 
@@ -13,16 +13,16 @@
 | `getRandomLevel()` | ✓ 已写 | `zslRandomLevel` | :181 |
 | `insert(score, ele)` | ✓ 已写 | `zslInsert` | :198 |
 | `Delete(score, ele)` | ✓ 已写 | `zslDelete` + `zslDeleteNode` | :352 + :316 |
-| `find(ele)` | 待写 | 无独立函数(查找骨架内嵌在 Delete 里) | 参考 :352 前半段 |
-| `rank(ele)` | 待写 | `zslGetRank` | :691 |
-| `nodeByRank(r)` | 待写 | `zslGetElementByRank` | :735 |
-| `hasInRange(range)` | 待写 | `zslIsInRange` | :424 |
-| `firstInRange(range)` | 待写 | `zslFirstInRange` | :455 |
-| `lastInRange(range)` | 待写 | `zslLastInRange` | :492 |
+| `find(score, ele)` | ✓ 已写 | 无独立函数(查找骨架内嵌在 Delete 里) | 参考 :352 前半段 |
+| `rank(score, ele)` | ✓ 已写 | `zslGetRank` | :691 |
+| `nodeByRank(r)` | ✓ 已写 | `zslGetElementByRank` | :735 |
+| `hasInRange(range)` | ✓ 已写 | `zslIsInRange` | :424 |
+| `firstInRange(range)` | ✓ 已写 | `zslFirstInRange` | :455 |
+| `lastInRange(range)` | ✓ 已写 | `zslLastInRange` | :492 |
 | `size()` | ✓ 字段直读 | `zsetLength`(zset 层包装) | :1575 |
 | `first()` | 平凡 | 无独立函数(即 `header->level[0].forward`) | — |
 
-## 区间组辅助(写 first/lastInRange 前先看)
+## 区间组辅助
 
 | MiniRedis | Redis 对应 | 位置 |
 |---|---|---|
@@ -35,7 +35,7 @@
 
 `zslDeleteRangeByScore:541` / `zslDeleteRangeByLex:578` / `zslDeleteRangeByRank:629`
 
-## zset 层(写 ZSet 对象层时看)
+## zset 层
 
 | 内容 | 位置 |
 |---|---|
