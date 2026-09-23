@@ -42,6 +42,9 @@ TEST(CommandDispatcherTest, WrongArity) {
     EXPECT_EQ(run(d, {"GET"}), "-ERR wrong number of arguments for 'get' command\r\n");
     EXPECT_EQ(run(d, {"SET", "k"}), "-ERR wrong number of arguments for 'set' command\r\n");
     EXPECT_EQ(run(d, {"EXISTS"}), "-ERR wrong number of arguments for 'exists' command\r\n");
+    EXPECT_EQ(run(d, {"DECR"}), "-ERR wrong number of arguments for 'decr' command\r\n");
+    EXPECT_EQ(run(d, {"DECRBY", "n"}), "-ERR wrong number of arguments for 'decrby' command\r\n");
+    EXPECT_EQ(run(d, {"TYPE"}), "-ERR wrong number of arguments for 'type' command\r\n");
     EXPECT_EQ(run(d, {"MSET", "a", "1", "b"}), "-ERR wrong number of arguments for 'mset' command\r\n");
     EXPECT_EQ(run(d, {"HSET", "h", "f", "v", "f2"}), "-ERR wrong number of arguments for 'hset' command\r\n");
 }
@@ -80,6 +83,23 @@ TEST(CommandDispatcherTest, IncrAndIncrBy) {
 
     run(d, {"SET", "big", "9223372036854775807"});
     EXPECT_EQ(run(d, {"INCR", "big"}), "-ERR increment or decrement would overflow\r\n");
+}
+
+TEST(CommandDispatcherTest, DecrAndDecrBy) {
+    CommandDispatcher d;
+    EXPECT_EQ(run(d, {"DECR", "n"}), ":-1\r\n");              // 不存在按 0 起算
+    EXPECT_EQ(run(d, {"DECR", "n"}), ":-2\r\n");
+    EXPECT_EQ(run(d, {"DECRBY", "n", "10"}), ":-12\r\n");
+    EXPECT_EQ(run(d, {"DECRBY", "n", "-5"}), ":-7\r\n");      // 负数就是加
+
+    run(d, {"SET", "s", "abc"});
+    EXPECT_EQ(run(d, {"DECR", "s"}), "-ERR value is not an integer or out of range\r\n");
+
+    run(d, {"SET", "low", "-9223372036854775808"});
+    EXPECT_EQ(run(d, {"DECR", "low"}), "-ERR increment or decrement would overflow\r\n");
+    // -LLONG_MIN 取负自己就溢出,得当场挡住而不是悄悄绕过去
+    EXPECT_EQ(run(d, {"DECRBY", "n", "-9223372036854775808"}),
+              "-ERR decrement would overflow\r\n");
 }
 
 TEST(CommandDispatcherTest, IncrOnHashIsWrongType) {
@@ -128,6 +148,23 @@ TEST(CommandDispatcherTest, WrongTypeAcrossStringAndHash) {
 
     run(d, {"HSET", "h", "f", "v"});
     EXPECT_EQ(run(d, {"GET", "h"}), kWrongType);
+}
+
+TEST(CommandDispatcherTest, TypeCommand) {
+    CommandDispatcher d;
+    EXPECT_EQ(run(d, {"TYPE", "missing"}), "+none\r\n");
+    EXPECT_EQ(run(d, {"type", "missing"}), "+none\r\n");
+
+    run(d, {"SET", "s", "v"});
+    EXPECT_EQ(run(d, {"TYPE", "s"}), "+string\r\n");
+    run(d, {"HSET", "h", "f", "v"});
+    EXPECT_EQ(run(d, {"TYPE", "h"}), "+hash\r\n");
+    run(d, {"ZADD", "z", "1", "m"});
+    EXPECT_EQ(run(d, {"TYPE", "z"}), "+zset\r\n");
+
+    run(d, {"SET", "gone", "v"});
+    run(d, {"EXPIRE", "gone", "0"});                 // 过期键按不存在算
+    EXPECT_EQ(run(d, {"TYPE", "gone"}), "+none\r\n");
 }
 
 TEST(CommandDispatcherTest, ExpireTtlPersist) {

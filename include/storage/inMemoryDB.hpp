@@ -45,6 +45,8 @@ public:
     bool del(const std::string& key);
     // EXISTS key；过期 key 视为不存在。
     bool exists(const std::string& key);
+    // TYPE key；返回 false 表示 key 不存在(含已过期)。
+    bool type(const std::string& key, redisObject::RedisObjectType& out);
     // INCR key；返回 false 时 err 带错误信息。
     bool incr(const std::string& key, long long& newValue, std::string& err);
     // INCRBY/DECR 的通用实现；delta 可正可负。

@@ -141,6 +141,16 @@ namespace{
         return intReply(exists);
     }
 
+    std::string handleType(InMemoryDB& db,const std::vector<std::string>& argv){
+        redisObject::RedisObjectType type;
+        if(!db.type(argv[1],type)) return RespEncoder::simpleString("none");
+
+        if(type == redisObject::RedisObjectType::STRING) return RespEncoder::simpleString("string");
+        if(type == redisObject::RedisObjectType::HASH) return RespEncoder::simpleString("hash");
+        if(type == redisObject::RedisObjectType::ZSET) return RespEncoder::simpleString("zset");
+        return RespEncoder::simpleString("none");
+    }
+
     std::string handleIncr(InMemoryDB& db,const std::vector<std::string>& argv){
         long long newValue = 0;
         std::string err;
@@ -156,6 +166,28 @@ namespace{
         long long newValue = 0;
         std::string err;
         if(!db.incrBy(argv[1],delta,newValue,err)) return RespEncoder::error(err);
+        return intReply(newValue);
+    }
+
+    std::string handleDecr(InMemoryDB& db,const std::vector<std::string>& argv){
+        long long newValue = 0;
+        std::string err;
+        if(!db.incrBy(argv[1],-1,newValue,err)) return RespEncoder::error(err);
+        return intReply(newValue);
+    }
+
+    std::string handleDecrBy(InMemoryDB& db,const std::vector<std::string>& argv){
+        long long delta = 0;
+        if(!toLongLong(argv[2],delta)){
+            return RespEncoder::error("ERR value is not an integer or out of range");
+        }
+        // -LLONG_MIN 本身就溢出了,取负之前先挡下来
+        if(delta == std::numeric_limits<long long>::min()){
+            return RespEncoder::error("ERR decrement would overflow");
+        }
+        long long newValue = 0;
+        std::string err;
+        if(!db.incrBy(argv[1],-delta,newValue,err)) return RespEncoder::error(err);
         return intReply(newValue);
     }
 
@@ -500,8 +532,11 @@ namespace{
         {"mget",             {-2, false, handleMGet}},
         {"del",              {-2, true,  handleDel}},
         {"exists",           {-2, false, handleExists}},
+        {"type",             {2,  false, handleType}},
         {"incr",             {2,  true,  handleIncr}},
         {"incrby",           {3,  true,  handleIncrBy}},
+        {"decr",             {2,  true,  handleDecr}},
+        {"decrby",           {3,  true,  handleDecrBy}},
         {"hset",             {-4, true,  handleHset}},
         {"hget",             {3,  false, handleHget}},
         {"hdel",             {-3, true,  handleHdel}},

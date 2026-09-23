@@ -38,6 +38,12 @@ bool InMemoryDB::exists(const std::string& key){
     expireIfNeed(key);
     return kv_.get(SDS(key)) != nullptr;
 }
+bool InMemoryDB::type(const std::string& key, redisObject::RedisObjectType& out){
+    redisObject* object = getObject(key);
+    if(object == nullptr) return false;
+    out = object->type();
+    return true;
+}
 bool InMemoryDB::incr(const std::string& key, long long& newValue, std::string& err){
     return incrBy(key,1,newValue,err);
 }

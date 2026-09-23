@@ -6,7 +6,15 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <csignal>
 #include <cstdlib>
+
+namespace{
+    // 信号处理函数里只能碰 sig_atomic_t,收尾动作全部交给事件循环去做
+    volatile sig_atomic_t g_stop = 0;
+    void onStopSignal(int){ g_stop = 1; }
+}
+
 RedisServer::RedisServer(int port,
             const std::string& name,
             TcpServer::Option option):
@@ -21,8 +29,25 @@ void RedisServer::start(){
         std::exit(1);
     }
     mainLoop_.runEvery(1.0, [this]{ dispatcher_.cron(); });
+
+    struct sigaction sa{};
+    sa.sa_handler = onStopSignal;
+    sigaction(SIGINT,&sa,nullptr);
+    sigaction(SIGTERM,&sa,nullptr);
+    // 信号本身只置了标志,这里轮询到再刷一次 AOF 然后退出循环
+    mainLoop_.runEvery(0.2,[this]{
+        if(!g_stop) return;
+        std::string err;
+        if(!dispatcher_.aof().flushIfNeeded(err,true)){
+            std::cerr << "flush AOF failed: " << err << std::endl;
+        }
+        std::cout << "stop signal received, aof flushed" << std::endl;
+        mainLoop_.quit();
+    });
+
     redisServer_.start();
     mainLoop_.loop();
+    std::cout << "mini-redis server stopped" << std::endl;
 }
 
 void RedisServer::onConnection(const TcpConnectionPtr& conn){
