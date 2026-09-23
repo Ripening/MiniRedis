@@ -4,11 +4,14 @@
 
 | 文件 | 主题 | 状态 |
 |---|---|---|
-| `resp-protocol.md` | RESP2 协议格式、增量解析、半包/粘包、Pipeline | ⬜ W2 写前建 |
+| `resp-protocol.md` | RESP2 协议格式、增量解析、半包/粘包、Pipeline | ⬜ 待写 |
 | `rehash.md` | 渐进式 rehash:为什么需要、双表结构、搬迁时机 | ⬜ 待写 |
 | `sds-design.md` | SDS:三种头部、预分配策略、为什么不用 std::string | ⬜ 待写 |
-| `aof.md` | AOF:回放、重写、三种 fsync 策略 | ⬜ W3 |
-| `benchmark.md` | 压测方法与优化路径(参考:15k→55k 的迭代) | ⬜ W4 |
+| `aof.md` | AOF:回放、重写、三种 fsync 策略 | ⬜ 待写 |
+| `skiplist.md` | 跳表:层 / span / rank 转化,为什么 ZSet 需要它 | ⬜ 待写 |
+| `benchmark.md` | 压测方法与优化路径 | ⬜ 待写 |
+
+> 上面几篇**一篇都还没写**——代码层已经全部落地,缺的是"能讲出来"这一层。
 
 ## 写法建议
 

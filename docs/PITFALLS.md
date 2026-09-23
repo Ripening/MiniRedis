@@ -72,6 +72,13 @@ new redisObject(..., new SDS(str));
 ```
 修法:先用 unique_ptr 接管载荷,再 `release()` 给构造。
 
+### 7.1 ⚠️ `freeRedisObject` 的 switch 没有 default(踩过)
+
+新增类型时漏写一个 `case`,**编译器一声不吭**,析构函数静默跳过 → 该类型的对象全部泄漏。
+加 ZSet 时就漏过一次 `case ZSET`(ASan 查不出来,靠 MAC 上的 `leaks --atExit` 才发现)。
+**对策**:`redisObject` 新增任何一种类型,第一件事是去 `freeRedisObject` 补 case;
+析构里加不变量断言是更硬的办法。
+
 ---
 
 ## 三、SDS / core 层
@@ -132,7 +139,7 @@ return expires_.erase(SDS(key));
 **后果链**:SET 清 TTL 失效 → 过期 key 被访问后 expires_ 残留旧时间戳 → 重新 SET 的新值一进来就被判"已过期",下次访问立刻被删。
 **教训**:改写类函数(erase/delete 语义)后,拿一条真实数据 trace 一遍再提交。
 
-### 14. ⚠️ `&&` 串联两个 erase 当返回值(待修)
+### 14. `&&` 串联两个 erase 当返回值(已修)
 
 ```cpp
 // ❌ 无 TTL 的 key:左边删成功(true)、右边没东西删(false)→ 整体 false,误报失败
@@ -145,3 +152,47 @@ return erased;
 ```
 
 **记住**:`erase` 返回的是"删没删掉",不是"操作成不成功"。参考实现里 `(void)eraseExpire(key)` 的 void 强转就是在示意"这个返回值不要参与逻辑"。
+
+---
+
+## 六、只在优化档下暴露的坑
+
+### 15. ⚠️ `open()` 带 `O_CREAT` 却没给 mode:O0 静默、O1+ 直接 abort
+
+```cpp
+// ❌ 三参数版 open 少写 mode;O_CREAT 时 mode 是必需的
+int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND);
+
+// ✅
+int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+```
+
+`_FORTIFY_SOURCE` 会在编译期认出这个模式并插检查,**但它只在 `-O1` 及以上生效**。
+于是同一个文件:容器里 `-O0` 编出来能跑,一开 `-O3` 跑压测立刻
+`*** invalid open call: O_CREAT or O_TMPFILE without mode ***` 然后被 abort 掉。
+
+**这个 bug 潜伏了很久没暴露**,因为 CMakeLists 里没有默认 `CMAKE_BUILD_TYPE`——
+所有本地构建都是 -O0。**对策(已落地)**:CI 用 Debug/Release 矩阵,两个优化档都编一遍、
+都跑测试;本地压测脚本固定走 Release。
+
+### 16. `std::string::erase(0, n)` 逐条调用 = O(n²)
+
+从缓冲区头部消费数据的常见写法:
+
+```cpp
+// ❌ 每解析一条命令就搬一次,剩余部分整体 memmove
+if (pos_ > 0) { buffer_.erase(0, pos_); pos_ = 0; }
+```
+
+单条命令看不出问题;一旦把整份 AOF(几十 MB)一次性 `feed()` 进来,复杂度就退化了。
+实测每翻倍耗时约 4 倍:25k 命令 0.31 s → 100k 3.66 s → 200k 13.9 s。
+
+```cpp
+// ✅ 消费过半才搬移,摊还 O(1)/字节
+if (pos_ > 0 && pos_ > buffer_.size() / 2) { buffer_.erase(0, pos_); pos_ = 0; }
+```
+
+改完实测 0.10 s 上下持平(与命令数无关),27 MB 的 AOF 回放从外推的 ~140 s 降到 0.32 s。
+
+**通用判据**:凡是"从容器头部删元素"的操作,先问一句"这个容器会不会很大、删会不会很频繁"——
+`vector`/`string` 头部删除是整体搬移,`deque`/环形缓冲才便宜。

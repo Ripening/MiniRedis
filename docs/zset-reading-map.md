@@ -2,7 +2,7 @@
 
 > 对照对象:redis-3.0-annotated(黄健宏中文注释版),本地:`~/references/redis-3.0-annotated`
 > 跳表 + ZSet 代码几乎全在 `src/t_zset.c`(3.0 无独立 zskiplist.c),唯一例外:`zrangespec` 在 `src/redis.h:1705-1716`
-> 状态列截至 2026-09-23(跳表层与 ZSet 层均已写完并过测试)
+> 状态列:跳表层与 ZSet 层均已写完并过测试
 
 ## 跳表接口对照
 
