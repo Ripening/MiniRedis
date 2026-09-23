@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <chrono>
+#include <cstdint>
 enum class DBStatus{
     OK = 0,
     NotFound,

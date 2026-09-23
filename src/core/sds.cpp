@@ -1,4 +1,5 @@
 #include "core/sds.hpp"
+#include <cstdint>
 #include <limits>
 #include <stdlib.h>
 #include <stdexcept>

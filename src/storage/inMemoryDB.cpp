@@ -1,5 +1,6 @@
 #include "storage/inMemoryDB.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <utility>

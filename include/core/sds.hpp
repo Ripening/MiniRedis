@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <cstring>
 #include <string_view>
 #pragma pack(push,1)
