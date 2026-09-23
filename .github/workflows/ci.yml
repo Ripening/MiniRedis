@@ -7,12 +7,17 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 两个都要:Debug 保留 assert,Release 才开 _FORTIFY_SOURCE(只在 -O1+ 生效)
+        build_type: [Debug, Release]
     steps:
       - uses: actions/checkout@v4
 
       # 这个开关默认是 OFF,CI 里不写就一个测试都不会编
       - name: Configure
-        run: cmake -B build -DMINIREDIS_BUILD_TESTS=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DMINIREDIS_BUILD_TESTS=ON
 
       # runner 天然是 Linux,Mac 上被跳过的 server + myMuduo 在这里才会编到
       - name: Build
