@@ -336,7 +336,7 @@ TEST(ZSetTest, BinarySafeMember) {
 TEST(ZSetTest, StressAgainstModel) {
     ZSet zs;
     Model model;
-    std::mt19937 rng(20260922);
+    std::mt19937 rng(12345);
     std::uniform_int_distribution<int> opDist(0, 3);
     std::uniform_int_distribution<int> nameDist(0, 40);
     std::uniform_int_distribution<int> scoreDist(1, 200);

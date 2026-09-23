@@ -386,7 +386,7 @@ TEST(SkipListTest, BinarySafeElement) {
 TEST(SkipListTest, StressMatchesReferenceModel) {
     SkipList sl;
     std::set<Entry> model;
-    std::mt19937 rng(20260922);
+    std::mt19937 rng(12345);
     std::uniform_int_distribution<int> scoreDist(1, 6);   // 分数刻意压窄,制造大量同分
     std::uniform_int_distribution<int> nameDist(0, 60);
 
