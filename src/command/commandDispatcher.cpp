@@ -83,6 +83,10 @@ namespace{
         return RespEncoder::simpleString("PONG");
     }
 
+    std::string handleEcho(InMemoryDB& db,const std::vector<std::string>& argv){
+        return RespEncoder::bulkString(argv[1]);
+    }
+
     std::string handleSet(InMemoryDB& db,const std::vector<std::string>& argv){
         db.set(argv[1],argv[2]);
         return okReply();
@@ -489,6 +493,7 @@ namespace{
 
     const std::unordered_map<std::string_view, CommandSpec> kCommands = {
         {"ping",             {-1, false, handlePing}},
+        {"echo",             {2,  false, handleEcho}},
         {"set",              {3,  true,  handleSet}},
         {"mset",             {-3, true,  handleMset}},
         {"get",              {2,  false, handleGet}},

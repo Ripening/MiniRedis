@@ -32,15 +32,25 @@ size_t RespParser::pendingBytes() const{
 
 bool RespParser::parse(RespObject& out){
     const size_t start = pos_;
-    if(!parseInternal(out)){
+    if(!skipEmptyLines()||!parseInternal(out)){
         //解析失败，回到起点
         pos_ = start;
         return false;
     }
-    
+
     if(pos_>0){
         buffer_.erase(0,pos_);
         pos_ = 0;
+    }
+    return true;
+}
+
+// 只认成对的 CRLF;'\r' 后面不是 '\n' 就还给类型分派去报错(那是真损坏)
+bool RespParser::skipEmptyLines(){
+    while(pos_<buffer_.size()&&buffer_[pos_]=='\r'){
+        if(pos_+1>=buffer_.size()) return false;    //只收到半个 CRLF，等下一个字节
+        if(buffer_[pos_+1]!='\n') return true;
+        pos_ += 2;
     }
     return true;
 }

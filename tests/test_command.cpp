@@ -28,6 +28,15 @@ TEST(CommandDispatcherTest, EmptyAndUnknownAndCaseInsensitive) {
     EXPECT_EQ(run(d, {"PiNg"}), "+PONG\r\n");
 }
 
+TEST(CommandDispatcherTest, Echo) {
+    CommandDispatcher d;
+    EXPECT_EQ(run(d, {"ECHO", "hello"}), "$5\r\nhello\r\n");
+    EXPECT_EQ(run(d, {"echo", ""}), "$0\r\n\r\n");
+    EXPECT_EQ(run(d, {"ECHO", "a b"}), "$3\r\na b\r\n");
+    EXPECT_EQ(run(d, {"ECHO"}), "-ERR wrong number of arguments for 'echo' command\r\n");
+    EXPECT_EQ(run(d, {"ECHO", "a", "b"}), "-ERR wrong number of arguments for 'echo' command\r\n");
+}
+
 TEST(CommandDispatcherTest, WrongArity) {
     CommandDispatcher d;
     EXPECT_EQ(run(d, {"GET"}), "-ERR wrong number of arguments for 'get' command\r\n");

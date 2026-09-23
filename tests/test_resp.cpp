@@ -289,6 +289,53 @@ TEST(RespParserTest, DesyncDetectedWhenLengthLies) {
     EXPECT_THROW(parser.parse(out), std::runtime_error);
 }
 
+// ---------- 报文之间的裸 CRLF ----------
+// 真 Redis 把空行当空的行内命令跳过;redis-cli --pipe 传完 payload
+// 会补一个裸 CRLF,不容忍就会把整条连接误判成协议错
+
+TEST(RespParserTest, SkipsBareCrlfBetweenMessages) {
+    RespParser parser;
+    RespObject out;
+    const std::string wire = "\r\n" + command({"PING"});
+    parser.feed(wire.data(), wire.size());
+    ASSERT_TRUE(parser.parse(out));
+    EXPECT_EQ(out.elements.size(), 1u);
+    EXPECT_EQ(out.elements[0].str, "PING");
+    EXPECT_EQ(parser.pendingBytes(), 0u);
+}
+
+TEST(RespParserTest, SkipsRepeatedBareCrlf) {
+    RespParser parser;
+    RespObject out;
+    const std::string wire = "\r\n\r\n" + command({"SET", "k", "v"});
+    parser.feed(wire.data(), wire.size());
+    ASSERT_TRUE(parser.parse(out));
+    EXPECT_EQ(out.elements[0].str, "SET");
+    EXPECT_EQ(parser.pendingBytes(), 0u);
+}
+
+// 半个 CRLF 只是数据没到齐,必须回 false 等后续字节,不能当协议错
+TEST(RespParserTest, HalfCrlfWaitsForMoreData) {
+    RespParser parser;
+    RespObject out;
+    const std::string wire = "\r\n" + command({"PING"});
+    parser.feed(wire.data(), 1);                 // 只喂一个 '\r'
+    EXPECT_FALSE(parser.parse(out));
+
+    parser.feed(wire.data() + 1, wire.size() - 1);
+    ASSERT_TRUE(parser.parse(out));
+    EXPECT_EQ(out.elements[0].str, "PING");
+}
+
+// '\r' 后面不是 '\n' 是真损坏,不能一并容忍掉
+TEST(RespParserTest, ThrowsOnCrWithoutLf) {
+    RespParser parser;
+    RespObject out;
+    const std::string wire = "\rX" + command({"PING"});
+    parser.feed(wire.data(), wire.size());
+    EXPECT_THROW(parser.parse(out), std::runtime_error);
+}
+
 // ---------- 编码器 ----------
 
 TEST(RespEncoderTest, FormatAllTypes) {

@@ -13,6 +13,8 @@ public:
     // 返回缓冲区中尚未消费的字节数，便于上层区分“等待更多数据”和“已完整消费完”。
     size_t pendingBytes() const;
 private:
+    // 跳过报文之间的裸 CRLF(真 Redis 当空的行内命令处理)
+    bool skipEmptyLines();
     bool parseInternal(RespObject&);
     
     bool parseSimpleString(RespObject&);
