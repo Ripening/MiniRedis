@@ -3,6 +3,8 @@
 
 #include <cctype>
 #include <charconv>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
@@ -54,6 +56,15 @@ namespace{
         }catch(const std::exception&){
             return false;
         }
+    }
+
+    // 命令选项大小写不敏感(redis-cli 发的是大写 WITHSCORES)
+    bool equalsIgnoreCase(const std::string& s,std::string_view lower){
+        if(s.size()!=lower.size()) return false;
+        for(size_t i = 0; i<s.size(); i++){
+            if(std::tolower(static_cast<unsigned char>(s[i]))!=lower[i]) return false;
+        }
+        return true;
     }
 
     std::string encodeMGetReply(const std::vector<MGetValue>& values) {
@@ -232,26 +243,282 @@ namespace{
         return std::string(buf,result.ptr);
     }
 
+    bool parseScore(const std::string& s,double& out){
+        if(s == "inf"||s == "+inf"){
+            out = std::numeric_limits<double>::infinity();
+            return true;
+        }
+        if(s == "-inf"){
+            out = -std::numeric_limits<double>::infinity();
+            return true;
+        }
+        try{
+            size_t parsed = 0;
+            out = std::stod(s,&parsed);
+            if(parsed!=s.size()) return false;
+            return !std::isnan(out);        // nan 会让跳表的比较全为假,有序性直接失效
+        }catch(const std::exception&){
+            return false;
+        }
+    }
+
+    // 区间端点可带 '(' 前缀表示开区间;min/max 永远是升序两个端点
+    bool parseScoreRange(const std::string& minStr,const std::string& maxStr,ScoreRange& range){
+        std::string min = minStr;
+        std::string max = maxStr;
+
+        range.minExclusive = !min.empty()&&min[0]=='(';
+        if(range.minExclusive) min.erase(0,1);
+        range.maxExclusive = !max.empty()&&max[0]=='(';
+        if(range.maxExclusive) max.erase(0,1);
+
+        return parseScore(min,range.min)&&parseScore(max,range.max);
+    }
+
+    // ZPOPMIN/ZPOPMAX 的可选 count;负数不是合法个数
+    bool parseCount(const std::string& s,size_t& count,std::string& err){
+        long long parsed = 0;
+        if(!toLongLong(s,parsed)){
+            err = "ERR value is not an integer or out of range";
+            return false;
+        }
+        if(parsed < 0){
+            err = "ERR value is out of range, must be positive";
+            return false;
+        }
+        count = static_cast<size_t>(parsed);
+        return true;
+    }
+
+    // 尾部可选的 WITHSCORES;带了别的尾巴就是语法错,不能静默忽略
+    bool parseWithScores(const std::vector<std::string>& argv,bool& withScores){
+        if(argv.size() <= 4) return true;
+        // WITHSCORES 后面再挂东西真 Redis 也是报语法错
+        if(argv.size() > 5||!equalsIgnoreCase(argv[4],"withscores")) return false;
+        withScores = true;
+        return true;
+    }
+
+    // 带分数时平铺成 [member, score, ...],与 ZPOPMIN 的配对嵌套不同
+    std::string encodeZSetReply(const std::vector<DBZSetEntry>& entries,bool withScores){
+        std::vector<std::string> flat;
+        flat.reserve(withScores ? entries.size()*2 : entries.size());
+        for(const DBZSetEntry& entry : entries){
+            flat.push_back(entry.member);
+            if(withScores) flat.push_back(scoreToString(entry.score));
+        }
+        return RespEncoder::array(flat);
+    }
+
+    // 带 count 的 ZPOPMIN/ZPOPMAX 回嵌套数组,不带的回平铺 [member, score]
+    std::string encodeZPopReply(const std::vector<DBZSetEntry>& popped,bool nested){
+        if(!nested){
+            std::vector<std::string> flat;
+            flat.reserve(popped.size()*2);
+            for(const DBZSetEntry& entry : popped){
+                flat.push_back(entry.member);
+                flat.push_back(scoreToString(entry.score));
+            }
+            return RespEncoder::array(flat);
+        }
+
+        std::string out = "*" + std::to_string(popped.size()) + "\r\n";
+        for(const DBZSetEntry& entry : popped){
+            out += "*2\r\n";
+            out += RespEncoder::bulkString(entry.member);
+            out += RespEncoder::bulkString(scoreToString(entry.score));
+        }
+        return out;
+    }
+
+    std::string handleZadd(InMemoryDB& db,const std::vector<std::string>& argv){
+        if(argv.size()%2!=0) return wrongArity("zadd");
+
+        std::vector<std::pair<double,std::string>> memberScores;
+        memberScores.reserve((argv.size()-2)/2);
+        for(size_t i = 2; i + 1 < argv.size(); i += 2){
+            double score = 0;
+            if(!parseScore(argv[i],score)) return RespEncoder::error("ERR value is not a valid float");
+            memberScores.emplace_back(score,argv[i+1]);
+        }
+
+        int added = 0;
+        const DBStatus status = db.zadd(argv[1],memberScores,added);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        return intReply(added);
+    }
+
+    std::string handleZrange(InMemoryDB& db,const std::vector<std::string>& argv){
+        long long start = 0;
+        long long stop = 0;
+        if(!toLongLong(argv[2],start)||!toLongLong(argv[3],stop)){
+            return RespEncoder::error("ERR value is not an integer or out of range");
+        }
+
+        bool withScores = false;
+        if(!parseWithScores(argv,withScores)) return RespEncoder::error("ERR syntax error");
+
+        std::vector<DBZSetEntry> entries;
+        const DBStatus status = db.zrangeByRank(argv[1],start,stop,false,entries);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        return encodeZSetReply(entries,withScores);
+    }
+
+    std::string handleZrevrange(InMemoryDB& db,const std::vector<std::string>& argv){
+        long long start = 0;
+        long long stop = 0;
+        if(!toLongLong(argv[2],start)||!toLongLong(argv[3],stop)){
+            return RespEncoder::error("ERR value is not an integer or out of range");
+        }
+
+        bool withScores = false;
+        if(!parseWithScores(argv,withScores)) return RespEncoder::error("ERR syntax error");
+
+        std::vector<DBZSetEntry> entries;
+        const DBStatus status = db.zrangeByRank(argv[1],start,stop,true,entries);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        return encodeZSetReply(entries,withScores);
+    }
+
+    std::string handleZrangebyscore(InMemoryDB& db,const std::vector<std::string>& argv){
+        ScoreRange range{};
+        if(!parseScoreRange(argv[2],argv[3],range)){
+            return RespEncoder::error("ERR min or max is not a float");
+        }
+
+        bool withScores = false;
+        if(!parseWithScores(argv,withScores)) return RespEncoder::error("ERR syntax error");
+
+        std::vector<DBZSetEntry> entries;
+        const DBStatus status = db.zrangeByScore(argv[1],range,false,entries);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        return encodeZSetReply(entries,withScores);
+    }
+
+    std::string handleZrevrangebyscore(InMemoryDB& db,const std::vector<std::string>& argv){
+        // 客户端传的是 max min,ScoreRange 里永远是 min max
+        ScoreRange range{};
+        if(!parseScoreRange(argv[3],argv[2],range)){
+            return RespEncoder::error("ERR min or max is not a float");
+        }
+
+        bool withScores = false;
+        if(!parseWithScores(argv,withScores)) return RespEncoder::error("ERR syntax error");
+
+        std::vector<DBZSetEntry> entries;
+        const DBStatus status = db.zrangeByScore(argv[1],range,true,entries);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        return encodeZSetReply(entries,withScores);
+    }
+
+    std::string handleZrank(InMemoryDB& db,const std::vector<std::string>& argv){
+        size_t rank = 0;
+        const DBStatus status = db.zrank(argv[1],argv[2],false,rank);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        if(status != DBStatus::OK) return nilReply();
+        return intReply(static_cast<long long>(rank));
+    }
+
+    std::string handleZrevrank(InMemoryDB& db,const std::vector<std::string>& argv){
+        size_t rank = 0;
+        const DBStatus status = db.zrank(argv[1],argv[2],true,rank);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        if(status != DBStatus::OK) return nilReply();
+        return intReply(static_cast<long long>(rank));
+    }
+
+    std::string handleZincrby(InMemoryDB& db,const std::vector<std::string>& argv){
+        double delta = 0;
+        if(!parseScore(argv[2],delta)){
+            return RespEncoder::error("ERR value is not a valid float");
+        }
+
+        double newScore = 0;
+        const DBStatus status = db.zincrBy(argv[1],argv[3],delta,newScore);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        return RespEncoder::bulkString(scoreToString(newScore));
+    }
+
+    std::string handleZpopmin(InMemoryDB& db,const std::vector<std::string>& argv){
+        if(argv.size() > 3) return RespEncoder::error("ERR syntax error");
+
+        const bool hasCount = argv.size() > 2;
+        size_t count = 1;
+        if(hasCount){
+            std::string err;
+            if(!parseCount(argv[2],count,err)) return RespEncoder::error(err);
+        }
+
+        std::vector<DBZSetEntry> popped;
+        const DBStatus status = db.zpopMin(argv[1],count,popped);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        return encodeZPopReply(popped,hasCount);
+    }
+
+    std::string handleZpopmax(InMemoryDB& db,const std::vector<std::string>& argv){
+        if(argv.size() > 3) return RespEncoder::error("ERR syntax error");
+
+        const bool hasCount = argv.size() > 2;
+        size_t count = 1;
+        if(hasCount){
+            std::string err;
+            if(!parseCount(argv[2],count,err)) return RespEncoder::error(err);
+        }
+
+        std::vector<DBZSetEntry> popped;
+        const DBStatus status = db.zpopMax(argv[1],count,popped);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        return encodeZPopReply(popped,hasCount);
+    }
+
+    std::string handleZcard(InMemoryDB& db,const std::vector<std::string>& argv){
+        size_t len = 0;
+        const DBStatus status = db.zcard(argv[1],len);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        if(status != DBStatus::OK) return intReply(0);
+        return intReply(static_cast<long long>(len));
+    }
+
+    std::string handleZscore(InMemoryDB& db,const std::vector<std::string>& argv){
+        double score = 0;
+        const DBStatus status = db.zscore(argv[1],argv[2],score);
+        if(status == DBStatus::WrongType) return wrongTypeReply();
+        if(status != DBStatus::OK) return nilReply();
+        return RespEncoder::bulkString(scoreToString(score));
+    }
+
     const std::unordered_map<std::string_view, CommandSpec> kCommands = {
-        {"ping",    {-1, false, handlePing}},
-        {"set",     {3,  true,  handleSet}},
-        {"mset",    {-3, true,  handleMset}},
-        {"get",     {2,  false, handleGet}},
-        {"mget",    {-2, false, handleMGet}},
-        {"del",     {-2, true,  handleDel}},
-        {"exists",  {-2, false, handleExists}},
-        {"incr",    {2,  true,  handleIncr}},
-        {"incrby",  {3,  true,  handleIncrBy}},
-        {"hset",    {-4, true,  handleHset}},
-        {"hget",    {3,  false, handleHget}},
-        {"hdel",    {-3, true,  handleHdel}},
-        {"hexists", {3,  false, handleHexists}},
-        {"hlen",    {2,  false, handleHlen}},
-        {"hgetall", {2,  false, handleHgetall}},
-        {"expire",  {3,  true,  handleExpire}},
-        {"ttl",     {2,  false, handleTtl}},
-        {"pttl",    {2,  false, handlePttl}},
-        {"persist", {2,  true,  handlePersist}},
+        {"ping",             {-1, false, handlePing}},
+        {"set",              {3,  true,  handleSet}},
+        {"mset",             {-3, true,  handleMset}},
+        {"get",              {2,  false, handleGet}},
+        {"mget",             {-2, false, handleMGet}},
+        {"del",              {-2, true,  handleDel}},
+        {"exists",           {-2, false, handleExists}},
+        {"incr",             {2,  true,  handleIncr}},
+        {"incrby",           {3,  true,  handleIncrBy}},
+        {"hset",             {-4, true,  handleHset}},
+        {"hget",             {3,  false, handleHget}},
+        {"hdel",             {-3, true,  handleHdel}},
+        {"hexists",          {3,  false, handleHexists}},
+        {"hlen",             {2,  false, handleHlen}},
+        {"hgetall",          {2,  false, handleHgetall}},
+        {"zadd",             {-4, true,  handleZadd}},
+        {"zincrby",          {4,  true,  handleZincrby}},
+        {"zpopmin",          {-2, true,  handleZpopmin}},
+        {"zpopmax",          {-2, true,  handleZpopmax}},
+        {"zcard",            {2,  false, handleZcard}},
+        {"zscore",           {3,  false, handleZscore}},
+        {"zrank",            {3,  false, handleZrank}},
+        {"zrevrank",         {3,  false, handleZrevrank}},
+        {"zrange",           {-4, false, handleZrange}},
+        {"zrevrange",        {-4, false, handleZrevrange}},
+        {"zrangebyscore",    {-4, false, handleZrangebyscore}},
+        {"zrevrangebyscore", {-4, false, handleZrevrangebyscore}},
+        {"expire",           {3,  true,  handleExpire}},
+        {"ttl",              {2,  false, handleTtl}},
+        {"pttl",             {2,  false, handlePttl}},
+        {"persist",          {2,  true,  handlePersist}},
     };
 }
 
