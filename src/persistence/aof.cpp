@@ -261,7 +261,7 @@ bool AOF::pollBackgroundRewrite(std::string& err){
 bool AOF::appendPayloadToFile(const std::string& path, const std::string& payload, bool append, std::string& err) const{
     err.clear();
     int flag = (O_WRONLY | O_CREAT | (append?O_APPEND : O_TRUNC));
-    const int fd = ::open(path.c_str(),flag);
+    const int fd = ::open(path.c_str(),flag,0644);
     if(fd < 0){
         err = std::strerror(errno);
         return false;

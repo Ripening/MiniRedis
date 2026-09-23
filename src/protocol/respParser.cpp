@@ -38,7 +38,9 @@ bool RespParser::parse(RespObject& out){
         return false;
     }
 
-    if(pos_>0){
+    //消费过半才搬移,摊还 O(1)/字节。每条命令都 erase 的话,把整份 AOF 一次性喂进来
+    //回放会退化成 O(n²):每次 erase 都要 memmove 掉整个剩余缓冲区
+    if(pos_>0&&pos_>buffer_.size()/2){
         buffer_.erase(0,pos_);
         pos_ = 0;
     }
